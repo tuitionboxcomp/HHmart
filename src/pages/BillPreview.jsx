@@ -2,15 +2,11 @@ import { useState } from "react";
 import {
   Printer,
   Download,
-  Share2,
-  Mail,
   X,
   Check,
   Copy,
   MessageCircle,
-  MoreVertical,
   Eye,
-  Smartphone,
 } from "lucide-react";
 
 function BillPreview({
@@ -20,13 +16,12 @@ function BillPreview({
   paymentType,
   customerName,
   customerPhone,
-  customerEmail,
+  customerEmail, // still accepted for PDF, but no email feature
   notes,
   onClose,
 }) {
   const [copied, setCopied] = useState(false);
-  const [showOptions, setShowOptions] = useState(false);
-  const [previewMode, setPreviewMode] = useState("invoice"); // invoice or thermal
+  const [previewMode, setPreviewMode] = useState("invoice"); // "invoice" | "thermal"
 
   const billDate = new Date().toLocaleDateString("en-IN", {
     day: "2-digit",
@@ -41,7 +36,8 @@ function BillPreview({
   });
 
   const copyBillId = () => {
-    navigator.clipboard.writeText(billId);
+    if (!billId) return;
+    navigator.clipboard.writeText(String(billId));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -50,32 +46,18 @@ function BillPreview({
     window.print();
   };
 
-  const handlePDF = () => {
-    window.electronAPI.generatePDF({
+  const handlePDF = async () => {
+    // Match your main.js generatePDF signature:
+    // (billId, cart, totals, customer, paymentType)
+    await window.electronAPI.generatePDF({
       billId,
       cart,
       totals,
-      customerName: customerName || "Walk-in",
-      customerPhone,
-      customerEmail,
-      paymentType,
-      notes,
-      billDate,
-      billTime,
-    });
-  };
-
-  const handleEmail = () => {
-    if (!customerEmail) {
-      alert("No email provided for customer");
-      return;
-    }
-    window.electronAPI.sendBillEmail({
-      billId,
-      cart,
-      totals,
-      customerName,
-      customerEmail,
+      customer: {
+        name: customerName || "Walk-in",
+        phone: customerPhone || "",
+        email: customerEmail || "",
+      },
       paymentType,
     });
   };
@@ -85,27 +67,38 @@ function BillPreview({
       alert("No phone number provided for customer");
       return;
     }
-    const message = `Hi ${customerName || "Customer"},\n\nBill ID: ${billId}\nTotal: ₹${totals.total.toFixed(2)}\n\nThank you for your purchase!`;
+
+    const message = `Hi ${customerName || "Customer"},\n\nBill ID: ${
+      billId || ""
+    }\nTotal: ₹${totals.total.toFixed(
+      2
+    )}\n\nThank you for your purchase!`;
     const encodedMessage = encodeURIComponent(message);
+
+    // Use the customer number exactly as typed
     window.open(
-      `https://wa.me/91${customerPhone}?text=${encodedMessage}`,
+      `https://wa.me/${encodeURIComponent(customerPhone)}?text=${encodedMessage}`,
       "_blank"
     );
   };
 
   // INVOICE MODE (Professional)
   const InvoiceMode = () => (
-    <div className="bg-white rounded-xl shadow-2xl overflow-hidden max-w-2xl mx-auto">
+    <div className="bg-white rounded-xl shadow-2xl overflow-hidden max-w-2xl w-full mx-auto">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-8 py-8">
-        <div className="flex justify-between items-start mb-6">
+      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-6 md:px-8 py-6 md:py-8">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 md:gap-0 mb-4 md:mb-6">
           <div>
-            <h1 className="text-3xl font-bold">INVOICE</h1>
-            <p className="text-blue-100 text-sm mt-1">Professional Receipt</p>
+            <h1 className="text-2xl md:text-3xl font-bold">INVOICE</h1>
+            <p className="text-blue-100 text-xs md:text-sm mt-1">
+              Professional Receipt
+            </p>
           </div>
-          <div className="text-right">
-            <p className="text-2xl font-bold">#{billId}</p>
-            <p className="text-blue-100 text-xs mt-1">
+          <div className="text-left md:text-right">
+            <p className="text-xl md:text-2xl font-bold break-all">
+              #{billId}
+            </p>
+            <p className="text-blue-100 text-[11px] md:text-xs mt-1">
               {billDate} • {billTime}
             </p>
           </div>
@@ -113,50 +106,51 @@ function BillPreview({
       </div>
 
       {/* Content */}
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         {/* Customer Section */}
-        <div className="grid grid-cols-2 gap-8 mb-8 pb-6 border-b border-gray-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-6 md:mb-8 pb-4 md:pb-6 border-b border-gray-200">
           <div>
-            <p className="text-gray-500 text-xs font-semibold uppercase mb-2">
+            <p className="text-gray-500 text-[11px] font-semibold uppercase mb-1">
               Bill To
             </p>
-            <p className="text-lg font-bold text-gray-900">
+            <p className="text-lg font-bold text-gray-900 break-words">
               {customerName || "Walk-in Customer"}
             </p>
             {customerPhone && (
-              <p className="text-sm text-gray-600 mt-1">📱 {customerPhone}</p>
-            )}
-            {customerEmail && (
-              <p className="text-sm text-gray-600">📧 {customerEmail}</p>
+              <p className="text-sm text-gray-600 mt-1 break-all">
+                📱 {customerPhone}
+              </p>
             )}
           </div>
 
-          <div className="text-right">
-            <p className="text-gray-500 text-xs font-semibold uppercase mb-2">
+          <div className="text-left md:text-right">
+            <p className="text-gray-500 text-[11px] font-semibold uppercase mb-1">
               Payment Method
             </p>
-            <p className="text-lg font-bold text-gray-900">{paymentType}</p>
-            <div className="mt-3 inline-block bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-semibold">
+            <p className="text-lg font-bold text-gray-900">
+              {paymentType}
+            </p>
+            <div className="mt-2 inline-block bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-semibold">
               ✓ Completed
             </div>
           </div>
         </div>
 
         {/* Items Table */}
-        <div className="mb-8">
-          <table className="w-full text-sm mb-4">
+        <div className="mb-6 md:mb-8 overflow-x-auto">
+          <table className="w-full text-xs md:text-sm mb-4">
             <thead>
               <tr className="bg-gray-50 border-y border-gray-200">
-                <th className="px-4 py-3 text-left font-semibold text-gray-900">
+                <th className="px-3 md:px-4 py-2 md:py-3 text-left font-semibold text-gray-900">
                   Description
                 </th>
-                <th className="px-4 py-3 text-center font-semibold text-gray-900">
+                <th className="px-3 md:px-4 py-2 md:py-3 text-center font-semibold text-gray-900">
                   Qty
                 </th>
-                <th className="px-4 py-3 text-right font-semibold text-gray-900">
+                <th className="px-3 md:px-4 py-2 md:py-3 text-right font-semibold text-gray-900">
                   Unit Price
                 </th>
-                <th className="px-4 py-3 text-right font-semibold text-gray-900">
+                <th className="px-3 md:px-4 py-2 md:py-3 text-right font-semibold text-gray-900">
                   Amount
                 </th>
               </tr>
@@ -168,22 +162,27 @@ function BillPreview({
                 const itemGrandTotal = itemTotal + itemGst;
 
                 return (
-                  <tr key={idx} className="hover:bg-gray-50 transition">
-                    <td className="px-4 py-3">
+                  <tr
+                    key={idx}
+                    className="hover:bg-gray-50 transition-colors"
+                  >
+                    <td className="px-3 md:px-4 py-2 md:py-3">
                       <div>
-                        <p className="font-medium text-gray-900">{item.name}</p>
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="font-medium text-gray-900 break-words">
+                          {item.name}
+                        </p>
+                        <p className="text-[11px] text-gray-500 mt-1">
                           GST: {item.gst}%
                         </p>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-center text-gray-900 font-medium">
+                    <td className="px-3 md:px-4 py-2 md:py-3 text-center text-gray-900 font-medium">
                       {item.qty}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-900 font-medium">
-                      ₹{item.price.toFixed(2)}
+                    <td className="px-3 md:px-4 py-2 md:py-3 text-right text-gray-900 font-medium">
+                      ₹{Number(item.price).toFixed(2)}
                     </td>
-                    <td className="px-4 py-3 text-right font-bold text-gray-900">
+                    <td className="px-3 md:px-4 py-2 md:py-3 text-right font-bold text-gray-900">
                       ₹{itemGrandTotal.toFixed(2)}
                     </td>
                   </tr>
@@ -194,8 +193,8 @@ function BillPreview({
         </div>
 
         {/* Summary Section */}
-        <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-6 mb-6 border border-blue-200">
-          <div className="space-y-3">
+        <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-4 md:p-6 mb-4 md:mb-6 border border-blue-200">
+          <div className="space-y-2 md:space-y-3 text-sm md:text-base">
             <div className="flex justify-between items-center">
               <span className="text-gray-700 font-medium">Subtotal:</span>
               <span className="text-lg font-semibold text-gray-900">
@@ -225,7 +224,7 @@ function BillPreview({
               <span className="text-gray-900 font-bold text-lg">
                 Grand Total:
               </span>
-              <span className="text-3xl font-bold text-blue-600">
+              <span className="text-2xl md:text-3xl font-bold text-blue-600">
                 ₹{totals.total.toFixed(2)}
               </span>
             </div>
@@ -234,18 +233,22 @@ function BillPreview({
 
         {/* Notes Section */}
         {notes && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
-            <p className="text-xs font-semibold text-amber-900 mb-2">NOTES:</p>
-            <p className="text-sm text-amber-800">{notes}</p>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 md:p-4 mb-4 md:mb-6">
+            <p className="text-[11px] font-semibold text-amber-900 mb-1">
+              NOTES:
+            </p>
+            <p className="text-xs md:text-sm text-amber-800 whitespace-pre-line">
+              {notes}
+            </p>
           </div>
         )}
 
         {/* Footer */}
-        <div className="text-center pt-6 border-t border-gray-200">
+        <div className="text-center pt-4 md:pt-6 border-t border-gray-200">
           <p className="text-sm text-gray-500">
             Thank you for your business! 🙏
           </p>
-          <p className="text-xs text-gray-400 mt-2">
+          <p className="text-[11px] text-gray-400 mt-1 md:mt-2">
             Invoice generated on {billDate} at {billTime}
           </p>
         </div>
@@ -253,26 +256,32 @@ function BillPreview({
     </div>
   );
 
-  // THERMAL RECEIPT MODE
+  // THERMAL RECEIPT MODE (80mm optimized)
   const ThermalMode = () => (
-    <div className="bg-white rounded-lg shadow-lg w-80 mx-auto p-4 font-mono text-sm border border-gray-300">
-      {/* Thermal Header */}
-      <div className="text-center border-b border-dashed border-gray-400 pb-3 mb-3">
-        <p className="font-bold text-lg">RECEIPT</p>
-        <p className="text-xs text-gray-600">Bill ID: {billId}</p>
-        <p className="text-xs text-gray-600">
+    <div className="bg-white rounded-lg shadow-lg w-[80mm] max-w-full mx-auto p-4 font-mono text-xs border border-gray-300">
+      {/* Header */}
+      <div className="text-center border-b border-dashed border-gray-400 pb-2 mb-2">
+        <p className="font-bold text-base">RECEIPT</p>
+        <p className="text-[11px] text-gray-600 break-all">
+          Bill ID: {billId}
+        </p>
+        <p className="text-[11px] text-gray-600">
           {billDate} {billTime}
         </p>
       </div>
 
       {/* Customer Info */}
-      <div className="text-sm mb-3 pb-2 border-b border-dashed border-gray-400">
-        <p className="font-bold">{customerName || "Walk-in"}</p>
-        {customerPhone && <p className="text-xs">{customerPhone}</p>}
+      <div className="mb-2 pb-2 border-b border-dashed border-gray-400">
+        <p className="font-bold">
+          {customerName || "Walk-in Customer"}
+        </p>
+        {customerPhone && (
+          <p className="text-[11px] break-all">{customerPhone}</p>
+        )}
       </div>
 
       {/* Items */}
-      <div className="mb-3 pb-2 border-b border-dashed border-gray-400 space-y-2">
+      <div className="mb-2 pb-2 border-b border-dashed border-gray-400 space-y-1.5">
         {cart.map((item, idx) => {
           const itemTotal = item.qty * item.price;
           const itemGst = (itemTotal * item.gst) / 100;
@@ -280,15 +289,20 @@ function BillPreview({
 
           return (
             <div key={idx}>
-              <div className="flex justify-between">
-                <span className="font-semibold break-words w-32">{item.name}</span>
-                <span>{item.qty}x ₹{item.price.toFixed(2)}</span>
+              <div className="flex justify-between gap-2">
+                <span className="font-semibold break-words w-32">
+                  {item.name}
+                </span>
+                <span>
+                  {item.qty} x ₹{Number(item.price).toFixed(2)}
+                </span>
               </div>
-              <div className="flex justify-end text-xs text-gray-600">
-                GST {item.gst}%: ₹{itemGst.toFixed(2)}
+              <div className="flex justify-between text-[11px] text-gray-600">
+                <span>GST {item.gst}%</span>
+                <span>₹{itemGst.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between font-bold text-xs">
-                <span></span>
+              <div className="flex justify-between font-bold text-[11px]">
+                <span>Total</span>
                 <span>₹{itemGrandTotal.toFixed(2)}</span>
               </div>
             </div>
@@ -297,7 +311,7 @@ function BillPreview({
       </div>
 
       {/* Totals */}
-      <div className="mb-3 pb-2 border-b border-dashed border-gray-400 space-y-1 text-xs">
+      <div className="mb-2 pb-2 border-b border-dashed border-gray-400 space-y-1 text-[11px]">
         <div className="flex justify-between">
           <span>Subtotal:</span>
           <span>₹{totals.subtotal.toFixed(2)}</span>
@@ -312,19 +326,19 @@ function BillPreview({
             <span>-₹{totals.discount.toFixed(2)}</span>
           </div>
         )}
-        <div className="flex justify-between font-bold text-base mt-2">
+        <div className="flex justify-between font-bold text-base mt-1">
           <span>TOTAL:</span>
           <span>₹{totals.total.toFixed(2)}</span>
         </div>
       </div>
 
       {/* Payment Info */}
-      <div className="text-center text-xs pb-2 border-b border-dashed border-gray-400 mb-2">
+      <div className="text-center text-[11px] pb-2 border-b border-dashed border-gray-400 mb-2">
         <p className="font-semibold">Payment: {paymentType}</p>
       </div>
 
       {/* Footer */}
-      <div className="text-center text-xs text-gray-600 space-y-1">
+      <div className="text-center text-[11px] text-gray-600 space-y-1">
         <p>Thank you!</p>
         <p>Visit Again</p>
       </div>
@@ -332,17 +346,21 @@ function BillPreview({
   );
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-gray-50 rounded-xl shadow-2xl w-full max-h-screen overflow-y-auto">
+    <div className="bp-overlay fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4">
+      <div className="bp-container bp-animated-panel bg-gray-50 rounded-xl shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col overflow-hidden">
         {/* Top Navigation Bar */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shadow-sm">
+        <div className="bp-topbar sticky top-0 bg-white border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4 flex justify-between items-center shadow-sm">
           <div className="flex items-center gap-3">
             <div className="bg-blue-100 p-2 rounded-lg">
-              <Check className="w-6 h-6 text-blue-600" />
+              <Check className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">Bill Summary</h2>
-              <p className="text-sm text-gray-500">Bill ID: {billId}</p>
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900 truncate">
+                Bill Summary
+              </h2>
+              <p className="text-xs sm:text-sm text-gray-500 truncate">
+                Bill ID: {billId}
+              </p>
             </div>
           </div>
 
@@ -350,15 +368,15 @@ function BillPreview({
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 p-2 rounded-lg transition"
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
 
         {/* Preview Mode Selector */}
-        <div className="bg-white border-b border-gray-200 px-6 py-3 flex gap-2">
+        <div className="bp-mode-switch bg-white border-b border-gray-200 px-4 sm:px-6 py-2 sm:py-3 flex flex-wrap gap-2">
           <button
             onClick={() => setPreviewMode("invoice")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition ${
+            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-[15px] font-medium transition ${
               previewMode === "invoice"
                 ? "bg-blue-500 text-white"
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -369,57 +387,49 @@ function BillPreview({
           </button>
           <button
             onClick={() => setPreviewMode("thermal")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition ${
+            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-[15px] font-medium transition ${
               previewMode === "thermal"
                 ? "bg-blue-500 text-white"
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
             }`}
           >
             <Printer className="w-4 h-4" />
-            Thermal
+            Thermal 80mm
           </button>
         </div>
 
         {/* Preview Content */}
-        <div className="p-6 bg-gray-50">
-          {previewMode === "invoice" ? <InvoiceMode /> : <ThermalMode />}
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 bg-gray-50">
+          <div className="bp-print-area flex justify-center">
+            {previewMode === "invoice" ? <InvoiceMode /> : <ThermalMode />}
+          </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="bp-actions sticky bottom-0 bg-white border-t border-gray-200 px-4 sm:px-6 py-3 sm:py-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3">
           <button
             onClick={handlePrint}
-            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2.5 sm:py-3 px-3 sm:px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg text-sm"
           >
-            <Printer className="w-5 h-5" />
-            <span className="hidden sm:inline">Print</span>
+            <Printer className="w-4 h-4 sm:w-5 sm:h-5" />
+            <span className="hidden xs:inline">Print</span>
           </button>
 
           <button
             onClick={handlePDF}
-            className="bg-red-500 hover:bg-red-600 text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+            className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2.5 sm:py-3 px-3 sm:px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg text-sm"
           >
-            <Download className="w-5 h-5" />
-            <span className="hidden sm:inline">PDF</span>
+            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+            <span className="hidden xs:inline">PDF</span>
           </button>
-
-          {customerEmail && (
-            <button
-              onClick={handleEmail}
-              className="bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
-            >
-              <Mail className="w-5 h-5" />
-              <span className="hidden sm:inline">Email</span>
-            </button>
-          )}
 
           {customerPhone && (
             <button
               onClick={handleWhatsApp}
-              className="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+              className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2.5 sm:py-3 px-3 sm:px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg text-sm"
             >
-              <MessageCircle className="w-5 h-5" />
-              <span className="hidden sm:inline">WhatsApp</span>
+              <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="hidden xs:inline">WhatsApp</span>
             </button>
           )}
 
@@ -428,28 +438,63 @@ function BillPreview({
             className={`${
               copied
                 ? "bg-green-500 hover:bg-green-600"
-                : "bg-gray-400 hover:bg-gray-500"
-            } text-white font-semibold py-3 px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg`}
+                : "bg-gray-500 hover:bg-gray-600"
+            } text-white font-semibold py-2.5 sm:py-3 px-3 sm:px-4 rounded-lg transition flex items-center justify-center gap-2 shadow-md hover:shadow-lg text-sm col-span-2 sm:col-span-1`}
           >
             {copied ? (
               <>
-                <Check className="w-5 h-5" />
-                <span className="hidden sm:inline">Copied</span>
+                <Check className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="hidden xs:inline">Copied</span>
               </>
             ) : (
               <>
-                <Copy className="w-5 h-5" />
-                <span className="hidden sm:inline">Copy ID</span>
+                <Copy className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="hidden xs:inline">Copy ID</span>
               </>
             )}
           </button>
         </div>
 
-        {/* Close overlay when clicking outside */}
+        {/* Extra styles for print + animations */}
         <style>{`
+          @keyframes bp-fade-in {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+          @keyframes bp-slide-up {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          .bp-overlay {
+            animation: bp-fade-in 0.18s ease-out;
+          }
+          .bp-animated-panel {
+            animation: bp-slide-up 0.22s ease-out;
+          }
           @media print {
-            body * { display: none; }
-            .no-print { display: none !important; }
+            /* Use the preview as the only printed content */
+            .bp-overlay {
+              position: static !important;
+              inset: 0 !important;
+              background: transparent !important;
+              padding: 0 !important;
+            }
+            .bp-container {
+              box-shadow: none !important;
+              border-radius: 0 !important;
+              max-width: 100% !important;
+              max-height: none !important;
+              overflow: visible !important;
+            }
+            .bp-topbar,
+            .bp-actions,
+            .bp-mode-switch {
+              display: none !important;
+            }
+            .bp-print-area {
+              margin: 0 auto !important;
+              padding: 0 !important;
+            }
           }
         `}</style>
       </div>

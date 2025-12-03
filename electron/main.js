@@ -1,32 +1,32 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
-import PDFDocument from 'pdfkit';
+import { app, BrowserWindow, ipcMain } from "electron";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+import PDFDocument from "pdfkit";
 
-// Resolve ESM dirname
+// Resolve dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Detect environment
 const isDev = !app.isPackaged;
 
-// Resolve DB folder for dev & production
+// DB Path
 const dbBasePath = isDev
-  ? path.join(__dirname, '../db') // Local project in development
-  : path.join(process.resourcesPath, 'db'); // Inside asar on production
+  ? path.join(__dirname, "../db")
+  : path.join(process.resourcesPath, "db");
 
-// --------------------------------------------------
-// 📦 Load DB modules using proper file:// URLs (fixes ERR_UNSUPPORTED_ESM_URL_SCHEME)
-// --------------------------------------------------
+// Load DB modules
 let db, getItemByBarcode, saveBill, saveBillItem, updateStock;
 
 try {
-  // Convert path to valid file URL
-  const dbUrl = `file:///${path.join(dbBasePath, 'connection.js').replace(/\\/g, '/')}`;
-  const queriesUrl = `file:///${path.join(dbBasePath, 'queries.js').replace(/\\/g, '/')}`;
+  const dbUrl = `file:///${path
+    .join(dbBasePath, "connection.js")
+    .replace(/\\/g, "/")}`;
+  const queriesUrl = `file:///${path
+    .join(dbBasePath, "queries.js")
+    .replace(/\\/g, "/")}`;
 
-  // Dynamic imports
   const dbModule = await import(dbUrl);
   db = dbModule.default;
 
@@ -41,11 +41,8 @@ try {
 }
 
 // --------------------------------------------------
-// 🚀 Create Application Window
+// Create Window
 // --------------------------------------------------
-console.log("Resources Path:", process.resourcesPath);
-console.log("DB Path:", dbBasePath);
-
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
@@ -54,52 +51,72 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
   if (isDev) {
-    win.loadURL('http://localhost:5173');
-    // win.webContents.openDevTools();
+    win.loadURL("http://localhost:5173");
   } else {
-   win.loadFile(path.join(__dirname, "../dist-react/index.html"));
-
+    win.loadFile(path.join(__dirname, "../dist-react/index.html"));
   }
 }
 
 app.whenReady().then(createWindow);
 
 // --------------------------------------------------
-// 🔍 Fetch Item by Barcode
+// Fetch Item
 // --------------------------------------------------
-ipcMain.handle('fetch-item', async (_, barcode) => {
+ipcMain.handle("fetch-item", async (_, barcode) => {
   try {
     return (await getItemByBarcode(barcode)) || null;
   } catch (err) {
-    console.error("❌ Error fetching item:", err);
+    console.error("❌ Error:", err);
     return null;
   }
 });
 
 // --------------------------------------------------
-// 💾 Save Bill & Update Stock
+// Save Bill
 // --------------------------------------------------
-ipcMain.handle('save-bill', async (_, billData) => {
+ipcMain.handle("save-bill", async (_, billData) => {
   try {
-    const { cart, totals, paymentType, customerName } = billData;
-    const billId = await saveBill(
-      totals.total,
-      totals.gstTotal,
-      totals.discount || 0,
+    const {
+      cart,
+      totals,
       paymentType,
-      customerName
+      customer,
+      notes,
+      discountType,
+      discount,
+    } = billData;
+
+    const billId = await saveBill(
+      customer.name || "Walk-In",
+      customer.phone || "",
+      customer.email || "",
+      paymentType,
+      totals.subtotal,
+      totals.gstTotal,
+      totals.discount,
+      totals.total,
+      notes
     );
 
     if (!billId) return { success: false };
 
     for (const item of cart) {
-      await saveBillItem(billId, item.id, item.qty, item.price, item.gst);
-      await updateStock(item.id, item.qty);
+      await saveBillItem(
+        billId,
+        item.name,
+        item.qty,
+        item.price,
+        item.gst,
+        item.qty * item.price
+      );
+
+      // reduce stock
+      await updateStock(item.item_id, item.qty);
     }
 
     return { success: true, billId };
@@ -110,149 +127,242 @@ ipcMain.handle('save-bill', async (_, billData) => {
 });
 
 // --------------------------------------------------
-// 📄 Generate & Save PDF Invoice
+// Generate PDF
 // --------------------------------------------------
-ipcMain.handle('generatePDF', async (_, { billId, cart, totals, customerName, paymentType }) => {
+ipcMain.handle(
+  "generatePDF",
+  async (_, { billId, cart, totals, customer, paymentType }) => {
+    try {
+      const doc = new PDFDocument();
+      const filePath = path.join(process.cwd(), `Bill-${billId}.pdf`);
+      doc.pipe(fs.createWriteStream(filePath));
+
+      doc.fontSize(20).text("🧾 Invoice", { align: "center" });
+      doc.moveDown();
+      doc.fontSize(12).text(`Bill No: ${billId}`);
+      doc.text(`Customer: ${customer.name}`);
+      doc.text(`Payment Type: ${paymentType}`);
+      doc.text(`Date: ${new Date().toLocaleString()}`);
+      doc.moveDown();
+      doc.text("----------------------------------");
+
+      cart.forEach((item) => {
+        doc.text(
+          `${item.name} x${item.qty} - ₹${(item.qty * item.price).toFixed(2)}`
+        );
+      });
+
+      doc.end();
+      return { success: true, filePath };
+    } catch (error) {
+      console.error("❌ PDF error:", error);
+      return { success: false };
+    }
+  }
+);
+
+// --------------------------------------------------
+// 📊 DASHBOARD STATISTICS
+// --------------------------------------------------
+ipcMain.handle(
+  "getDashboardStats",
+  async (_, range = "daily", customRange = {}) => {
+    try {
+      let dateCondition = "";
+
+      switch (range) {
+        case "daily":
+          dateCondition = `DATE(b.created_at) = CURRENT_DATE`;
+          break;
+        case "weekly":
+          dateCondition = `b.created_at >= NOW() - INTERVAL '7 days'`;
+          break;
+        case "monthly":
+          dateCondition = `b.created_at >= DATE_TRUNC('month', CURRENT_DATE)`;
+          break;
+        case "custom":
+          dateCondition = `b.created_at BETWEEN '${customRange.from}' AND '${customRange.to}'`;
+          break;
+      }
+
+      const summary = await db.query(`
+        SELECT
+          COUNT(*) AS bills_count,
+          COALESCE(SUM(bi.qty * bi.price), 0) AS total_sales,
+          COALESCE(AVG(bi.qty * bi.price), 0) AS avg_bill
+        FROM bills b
+        LEFT JOIN bill_items bi ON b.id = bi.bill_id
+        WHERE ${dateCondition}
+      `);
+
+      const itemsSold = await db.query(`
+        SELECT COALESCE(SUM(bi.qty), 0) AS items_sold
+        FROM bill_items bi
+        JOIN bills b ON bi.bill_id = b.id
+        WHERE ${dateCondition}
+      `);
+
+      const profit = await db.query(`
+        SELECT COALESCE(SUM((bi.qty * bi.price) - (bi.qty * i.buy_price)), 0) AS profit
+        FROM bill_items bi
+        JOIN items i ON i.name = bi.item_name
+        JOIN bills b ON b.id = bi.bill_id
+        WHERE ${dateCondition}
+      `);
+
+      const topItems = await db.query(`
+        SELECT item_name, SUM(qty) AS qty
+        FROM bill_items bi
+        JOIN bills b ON bi.bill_id = b.id
+        WHERE ${dateCondition}
+        GROUP BY item_name
+        ORDER BY qty DESC
+        LIMIT 5
+      `);
+
+      const lowStock = await db.query(`
+        SELECT item_id, name, stock
+        FROM items
+        WHERE stock <= 5
+        ORDER BY stock ASC
+        LIMIT 5
+      `);
+
+      const graphData = await db.query(`
+        SELECT DATE(b.created_at) AS date, SUM(bi.qty * bi.price) AS sales
+        FROM bill_items bi
+        JOIN bills b ON bi.bill_id = b.id
+        WHERE ${dateCondition}
+        GROUP BY date
+        ORDER BY date ASC
+      `);
+
+      return {
+        totalSales: summary.rows[0].total_sales,
+        billsCount: summary.rows[0].bills_count,
+        avgBill: summary.rows[0].avg_bill,
+        itemsSold: itemsSold.rows[0].items_sold,
+        profit: profit.rows[0].profit,
+        graphData: graphData.rows,
+        lowStock: lowStock.rows,
+        topItems: topItems.rows,
+        range,
+      };
+    } catch (error) {
+      console.error("❌ Dashboard stats error:", error);
+      return { error: "Dashboard failed." };
+    }
+  }
+);
+
+// --------------------------------------------------
+// 🔥 NEW FEATURE IPC HANDLERS ADDED BELOW
+// --------------------------------------------------
+
+// 1️⃣ Search Items Modal
+ipcMain.handle("search-items", async (_, keyword) => {
   try {
-    const doc = new PDFDocument();
-    const filePath = path.join(process.cwd(), `Bill-${billId}.pdf`);
-    doc.pipe(fs.createWriteStream(filePath));
+    const { rows } = await db.query(
+      `SELECT * FROM items 
+       WHERE name ILIKE $1 OR barcode ILIKE $1
+       ORDER BY name ASC LIMIT 50`,
+      [`%${keyword}%`]
+    );
+    return rows;
+  } catch (e) {
+    console.error("❌ search-items error:", e);
+    return [];
+  }
+});
 
-    doc.fontSize(20).text('🧾 Mart Billing Invoice', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text(`Bill No: ${billId}`);
-    doc.text(`Customer: ${customerName || 'Walk-in'}`);
-    doc.text(`Payment Type: ${paymentType}`);
-    doc.text(`Date: ${new Date().toLocaleString()}`);
-    doc.moveDown();
-    doc.text('----------------------------------');
-
-    cart.forEach(item => {
-      doc.text(
-        `${item.name} x${item.qty} - ₹${(
-          item.qty * item.price +
-          (item.qty * item.price * item.gst) / 100
-        ).toFixed(2)}`
-      );
-    });
-
-    doc.text('----------------------------------');
-    doc.text(`Subtotal: ₹${totals.subtotal.toFixed(2)}`);
-    doc.text(`GST: ₹${totals.gstTotal.toFixed(2)}`);
-    doc.text(`Discount: ₹${totals.discount}`);
-    doc.moveDown();
-    doc.fontSize(14).text(`Net Total: ₹${totals.total.toFixed(2)}`, { align: 'right' });
-    doc.end();
-
-    return { success: true, filePath };
-  } catch (error) {
-    console.error('❌ Error generating PDF:', error);
+// 2️⃣ Hold Bill - Save temporary bill
+ipcMain.handle("hold-bill", async (_, billData) => {
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO hold_bills(data) VALUES ($1) RETURNING id`,
+      [billData]
+    );
+    return { success: true, id: rows[0].id };
+  } catch (e) {
+    console.error("❌ hold-bill error:", e);
     return { success: false };
   }
 });
 
-// --------------------------------------------------
-// 📈 Dashboard Analytics
-// --------------------------------------------------
-ipcMain.handle("getDashboardStats", async (_, range = "daily", customRange = {}) => {
+// 3️⃣ Get All Hold Bills
+ipcMain.handle("get-hold-bills", async () => {
   try {
-    let dateCondition = "";
-
-    switch (range) {
-      case "daily": dateCondition = `DATE(b.date_time) = CURRENT_DATE`; break;
-      case "weekly": dateCondition = `b.date_time >= CURRENT_DATE - INTERVAL '7 days'`; break;
-      case "monthly": dateCondition = `EXTRACT(MONTH FROM b.date_time) = EXTRACT(MONTH FROM CURRENT_DATE)`; break;
-      case "custom": dateCondition = `b.date_time BETWEEN '${customRange.from}' AND '${customRange.to}'`; break;
-    }
-
-    // 📌 Summary Stats
-    const summary = await db.query(`
-      SELECT
-        COALESCE(SUM(b.total), 0) AS totalSales,
-        COALESCE(COUNT(b.bill_id), 0) AS billsCount,
-        COALESCE(AVG(b.total), 0) AS avgBill
-      FROM bills b
-      WHERE ${dateCondition}
-    `);
-
-    // 🛒 Items Sold
-    const itemsSold = await db.query(`
-      SELECT COALESCE(SUM(bi.qty), 0) AS itemsSold
-      FROM bill_items bi
-      JOIN bills b ON bi.bill_id = b.bill_id
-      WHERE ${dateCondition}
-    `);
-
-    // 💸 Profit
-    const profitData = await db.query(`
-      SELECT COALESCE(SUM((bi.qty * bi.price) - (bi.qty * i.buy_price)), 0) AS profit
-      FROM bill_items bi
-      JOIN items i ON bi.item_id = i.item_id
-      JOIN bills b ON bi.bill_id = b.bill_id
-      WHERE ${dateCondition}
-    `);
-
-    // 🔥 Top Items
-    const topItems = await db.query(`
-      SELECT i.name, SUM(bi.qty) AS qty
-      FROM bill_items bi
-      JOIN items i ON bi.item_id = i.item_id
-      JOIN bills b ON bi.bill_id = b.bill_id
-      WHERE ${dateCondition}
-      GROUP BY i.name
-      ORDER BY qty DESC
-      LIMIT 5
-    `);
-
-    // ⚠ Low Stock
-    const lowStock = await db.query(`
-      SELECT item_id AS id, name, stock
-      FROM items
-      WHERE stock <= 5
-      ORDER BY stock ASC
-      LIMIT 5
-    `);
-
-    // 📈 Graph Data
-    const graphData = await db.query(`
-      SELECT DATE(b.date_time) AS date, SUM(b.total) AS sales
-      FROM bills b
-      WHERE ${dateCondition}
-      GROUP BY DATE(b.date_time)
-      ORDER BY DATE(b.date_time) ASC
-    `);
-
-    // 🧾 Recent Bills (no date filter)
-    const recentBills = await db.query(`
-      SELECT bill_id, total, date_time
-      FROM bills
-      ORDER BY bill_id DESC
-      LIMIT 5
-    `);
-
-    return {
-      totalSales: summary.rows[0].totalsales,
-      billsCount: summary.rows[0].billscount,
-      avgBill: summary.rows[0].avgbill,
-      itemsSold: itemsSold.rows[0].itemssold,
-      profit: profitData.rows[0].profit,
-      graphData: graphData.rows,
-      recentBills: recentBills.rows,
-      lowStock: lowStock.rows,
-      topItems: topItems.rows,
-      range
-    };
-
-  } catch (error) {
-    console.error("❌ Dashboard stats error:", error);
-    return { error: "Failed to fetch dashboard stats" };
+    const { rows } = await db.query(`SELECT * FROM hold_bills ORDER BY id DESC`);
+    return rows;
+  } catch (e) {
+    console.error("❌ get-hold-bills error:", e);
+    return [];
   }
 });
 
+// 4️⃣ Resume & Delete Hold Bill
+ipcMain.handle("resume-hold-bill", async (_, id) => {
+  try {
+    const { rows } = await db.query(
+      `DELETE FROM hold_bills WHERE id=$1 RETURNING data`,
+      [id]
+    );
+    return rows[0]?.data || null;
+  } catch (e) {
+    console.error("❌ resume-hold-bill error:", e);
+    return null;
+  }
+});
+
+// 5️⃣ Quick Add Item
+ipcMain.handle("quick-add-item", async (_, item) => {
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO items (name, price, gst, stock, barcode, category)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING *`,
+      [
+        item.name,
+        item.price,
+        item.gst ?? 0,
+        item.stock ?? 0,
+        item.barcode ?? null,
+        item.category ?? "General",
+      ]
+    );
+    return rows[0];
+  } catch (e) {
+    console.error("❌ quick-add-item error:", e);
+    return null;
+  }
+});
+
+// 6️⃣ Return Billing - Load previous bill
+ipcMain.handle("get-bill-for-return", async (_, billId) => {
+  try {
+    const bill = await db.query(
+      `SELECT * FROM bills WHERE id = $1`,
+      [billId]
+    );
+
+    const items = await db.query(
+      `SELECT * FROM bill_items WHERE bill_id = $1`,
+      [billId]
+    );
+
+    if (!bill.rows[0]) return null;
+
+    return {
+      ...bill.rows[0],
+      items: items.rows,
+    };
+  } catch (e) {
+    console.error("❌ get-bill-for-return error:", e);
+    return null;
+  }
+});
 
 // --------------------------------------------------
-// 🚪 Quit the app
-// --------------------------------------------------
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
 });
